@@ -3,6 +3,7 @@ import pandas as pd
 from lxml import etree
 import re
 import unicodedata
+import io
 
 # --- 1. НАСТРОЙКИ СТРАНИЦЫ И СТИЛИ ---
 st.set_page_config(page_title="Лингвистический компаратор", layout="wide")
@@ -41,15 +42,12 @@ def parse_xml_tei(file):
             lemma = (w.get('lemma') or "").strip().lower()
             text = unicodedata.normalize('NFC', "".join(w.xpath('text()')).strip())
 
-            # Улучшенный парсинг морфологических признаков
             morph = {}
             for f in w.xpath('.//*[local-name()="f"]'):
                 name = f.get('name')
                 sym_vals = f.xpath('.//*[local-name()="symbol"]/@value')
                 if name and sym_vals:
-                    # Нормализуем значение для сравнения
                     morph_val = sym_vals[0]
-                    # Приводим к общему виду (убираем лишние пробелы)
                     morph[name] = morph_val.strip()
 
             if text:
@@ -89,29 +87,21 @@ def align_pair(base_list, target_list):
 
 
 def get_diff_type(w1, w2):
-    """Исправленная функция определения типа разночтения"""
     if not w1 or not w2:
         return "Пропуск"
 
-    # Сначала проверяем полное совпадение текста и морфологии
-    # Это самый строгий критерий - слова идентичны
     if w1['text'] == w2['text']:
-        # Если текст одинаковый, проверяем морфологию
         if w1['morph'] == w2['morph']:
             return "Идентично"
         else:
-            # Текст одинаковый, но морфологические признаки разные
             return "Морфологическое"
 
-    # Если текст разный, проверяем леммы
     if w1['lemma'] != w2['lemma'] and w1['lemma'] and w2['lemma']:
         return "Лексическое"
 
-    # Если леммы совпадают, но текст разный - это графическое/фонетическое
     if w1['lemma'] == w2['lemma'] and w1['lemma']:
         return "Графическое/Фон."
 
-    # Морфологическое разночтение при разной морфологии
     if w1['morph'] != w2['morph'] and w1['morph'] and w2['morph']:
         return "Морфологическое"
 
@@ -119,7 +109,6 @@ def get_diff_type(w1, w2):
 
 
 def get_context(words, index, context_size=10):
-    """Возвращает контекст: до 10 слов до и 10 слов после указанного индекса"""
     start = max(0, index - context_size)
     end = min(len(words), index + context_size + 1)
 
@@ -131,17 +120,99 @@ def get_context(words, index, context_size=10):
 
 # --- 3. ИНТЕРФЕЙС ---
 
-st.title("☦ Сравнительный анализ параллельных корпусов")
+st.title("Сравнительный анализ параллельных корпусов")
 
 # БЛОК ИНСТРУКЦИИ
-with st.expander("📖 Инструкция пользователя", expanded=True):
+with st.expander("📖 ПОДРОБНАЯ ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ (нажмите, чтобы развернуть)", expanded=True):
     st.markdown("""
-    1. **Загрузите XML-файлы** в боковой панели.
-    2. **Выберите Эталон**: основной текст, с которым будет идти сравнение.
-    3. **Нажмите кнопку '🚀 Запустить сравнение'**.
-    4. **Редактируйте**: если вы не согласны с типом разночтения, измените его в таблице 'Редактор'.
-    5. **Смотрите контекст**: выберите слово в таблице, чтобы увидеть его окружение (10 слов до и после).
-    6. **Анализируйте статистику**: в самом низу отображается процент сходства текстов.
+    ### 📌 ОСНОВНЫЕ ВОЗМОЖНОСТИ ПРОГРАММЫ
+
+    Данная программа позволяет сравнивать различные списки древнерусских евангельских текстов, автоматически выявлять разночтения и редактировать результаты.
+
+    ---
+
+    ### 🚀 ШАГ 1: ЗАГРУЗКА ФАЙЛОВ
+    1. В левой боковой панели (**Sidebar**) нажмите **"Browse files"** или **"Загрузить XML"**
+    2. Выберите один или несколько XML-файлов с евангельскими списками
+    3. После загрузки в выпадающем списке **"Эталонный список"** выберите основной текст (относительно него будет проводиться сравнение)
+
+    ---
+
+    ### 🔄 ШАГ 2: ЗАПУСК СРАВНЕНИЯ
+    Нажмите кнопку **"🚀 Запустить сравнение"** в левой боковой панели.
+    Программа автоматически:
+    - Сопоставит слова из разных списков (алгоритм глобального выравнивания)
+    - Определит типы разночтений (Лексические, Морфологические, Графические/Фонетические)
+    - Построит таблицу-редактор
+
+    ---
+
+    ### 📊 ШАГ 3: РАБОТА С ТАБЛИЦЕЙ-РЕДАКТОРОМ
+
+    **🖱️ Основные действия с таблицей:**
+
+    | Действие | Как выполнить |
+    |----------|---------------|
+    | **Сортировка данных** | Нажмите на заголовок любой колонки (▲▼) |
+    | **Поиск слова** | Нажмите **Ctrl+F** (или Cmd+F на Mac) для поиска по таблице |
+    | **Фильтрация** | Нажмите на значок фильтра (≡) в заголовке колонки |
+    | **Скрыть колонку** | Нажмите на значок "☰" в правом верхнем углу таблицы и снимите галочку с ненужной колонки |
+    | **Редактировать ячейку** | Дважды кликните по любой ячейке в колонке "Тип (...)" и выберите нужное значение |
+    | **Изменение ширины колонки** | Перетащите границу между заголовками колонок |
+
+    **📝 Типы разночтений (цветовая индикация):**
+    - 🟢 **Идентично** (зеленый) — слова полностью совпадают
+    - 🔴 **Лексическое** (красный) — разные слова (разные леммы)
+    - 🟡 **Морфологическое** (желтый) — разные грамматические формы
+    - 🔵 **Графическое/Фонетическое** (голубой) — разное написание при той же лемме
+
+    **💡 Важно:** Вы можете изменять тип разночтения вручную! Если вы не согласны с автоматическим определением, просто дважды кликните по ячейке в колонке "Тип" и выберите другой вариант. Статистика ниже обновится автоматически.
+
+    ---
+
+    ### 🔍 ШАГ 4: ПРОСМОТР КОНТЕКСТА СЛОВА
+
+    Под таблицей находится блок **"🔍 Контекст слова"**:
+
+    1. **Выберите строку** — введите номер строки, контекст которой хотите увидеть
+    2. **Выберите источник** — из какого списка показывать контекст (эталон или любой другой)
+
+    Программа покажет **10 слов до и 10 слов после** выбранного слова, а само слово будет выделено синим цветом.
+
+    ---
+
+    ### 📈 ШАГ 5: АНАЛИЗ СТАТИСТИКИ
+
+    В нижней части страницы отображается статистика по каждому списку:
+    - Общее количество слов
+    - Процент идентичных слов (сходство текстов)
+    - Количество каждого типа разночтений
+
+    Статистика обновляется автоматически при любых изменениях в таблице-редакторе!
+
+    ---
+
+    ### 💾 ШАГ 6: ЭКСПОРТ РЕЗУЛЬТАТОВ
+
+    В самом низу страницы есть кнопки для сохранения результатов:
+    - **📥 Скачать результаты (CSV)** — для открытия в Excel или LibreOffice
+    - **📊 Скачать Excel** — формат с сохранением форматирования
+
+    ---
+
+    ### ❓ ЧАСТЫЕ ВОПРОСЫ
+
+    **Вопрос:** Почему одинаковые слова иногда определяются как "Морфологическое разночтение"?  
+    **Ответ:** В XML-файлах слова могут иметь разные морфологические теги (например, разные падежи или числа). Программа учитывает эти различия.
+
+    **Вопрос:** Можно ли добавить свои XML-файлы?  
+    **Ответ:** Да! Просто загрузите их через кнопку загрузки файлов.
+
+    **Вопрос:** Как быстро найти конкретное слово во всех списках?  
+    **Ответ:** Используйте **Ctrl+F** в таблице-редакторе.
+
+    **Вопрос:** Что делать, если отображаются квадратики вместо букв?  
+    **Ответ:** Установите шрифт **BukyVede** или **Menaion Unicode** на вашем компьютере.
     """)
 
 if 'raw_data' not in st.session_state: st.session_state.raw_data = {}
@@ -169,6 +240,7 @@ if st.session_state.raw_data and st.button("🚀 Запустить сравне
             all_aligns = {name: align_pair(base_words, st.session_state.raw_data[name]) for name in others}
             final_rows = []
             for i, b_word in enumerate(base_words):
+                # Новый порядок колонок: ID, Лемма, ЭТАЛОН, затем остальные
                 row = {
                     "ID": b_word['id'],
                     "Лемма": b_word['lemma'],
@@ -193,7 +265,8 @@ if 'comp_df' in st.session_state:
     main_file = st.session_state.main_file
 
     st.subheader("📝 Таблица-редактор")
-    st.info("Вы можете менять значения в колонках 'Тип', статистика ниже обновится автоматически.")
+    st.info(
+        "💡 **Совет:** Нажмите на значок ☰ в правом верхнем углу таблицы, чтобы скрыть ненужные колонки. Используйте Ctrl+F для поиска по таблице.")
 
 
     # Цветовая схема
@@ -203,20 +276,20 @@ if 'comp_df' in st.session_state:
             if "Тип" in col:
                 val = row[col]
                 if val == "Лексическое":
-                    styles[i] = 'background-color: #ffcdd2'  # красноватый
+                    styles[i] = 'background-color: #ffcdd2'
                 elif val == "Морфологическое":
-                    styles[i] = 'background-color: #fff9c4'  # желтоватый
+                    styles[i] = 'background-color: #fff9c4'
                 elif val == "Графическое/Фон.":
-                    styles[i] = 'background-color: #e1f5fe'  # голубоватый
+                    styles[i] = 'background-color: #e1f5fe'
                 elif val == "Идентично":
-                    styles[i] = 'background-color: #c8e6c9'  # зеленоватый
+                    styles[i] = 'background-color: #c8e6c9'
         return styles
 
 
     # РЕДАКТОР
     edited_df = st.data_editor(df.style.apply(style_table, axis=1), use_container_width=True, height=400)
 
-    # КОНТЕКСТ (новый блок)
+    # КОНТЕКСТ
     st.divider()
     st.subheader("🔍 Контекст слова (10 слов до и после)")
 
@@ -239,18 +312,14 @@ if 'comp_df' in st.session_state:
     if not edited_df.empty:
         selected_word = edited_df.iloc[selected_row][f"ЭТАЛОН ({main_file})"]
 
-        # Определяем, из какого списка брать контекст
         if context_texts.startswith("ЭТАЛОН"):
-            # Берем контекст из главного списка
             words_list = st.session_state.base_words
             word_index = selected_row
             source_name = main_file
         else:
-            # Берем контекст из выбранного списка
             ms_name = context_texts.replace("Слово (", "").replace(")", "")
             aligned_word = st.session_state.all_aligns.get(ms_name, {}).get(selected_row)
             if aligned_word:
-                # Находим индекс в оригинальном списке
                 target_words = st.session_state.raw_data[ms_name]
                 for idx, w in enumerate(target_words):
                     if w['text'] == aligned_word['text']:
@@ -267,21 +336,17 @@ if 'comp_df' in st.session_state:
         if words_list and word_index < len(words_list):
             context_before, context_after = get_context(words_list, word_index, context_size=10)
 
-            # Формируем отображение контекста
             context_html = '<div class="context-box">'
             context_html += '<b>📖 Контекст (10 слов до и после):</b><br><br>'
 
-            # Слова до
             if context_before:
                 context_html += '<span style="color: #666;">... '
                 for w in context_before:
                     context_html += f'{w["text"]} '
                 context_html += '</span>'
 
-            # Выделенное слово
             context_html += f'<span style="background-color: #1E88E5; color: white; padding: 2px 8px; border-radius: 20px; font-weight: bold;">{selected_word}</span>'
 
-            # Слова после
             if context_after:
                 context_html += '<span style="color: #666;"> '
                 for w in context_after:
@@ -295,7 +360,7 @@ if 'comp_df' in st.session_state:
         else:
             st.info("Слово не найдено в выбранном списке для отображения контекста.")
 
-    # СТАТИСТИКА (Динамическая)
+    # СТАТИСТИКА
     st.divider()
     st.subheader("📈 Статистика по текстам")
 
@@ -312,17 +377,14 @@ if 'comp_df' in st.session_state:
             identical = counts.get("Идентично", 0)
             diffs = total - identical
 
-            # Процент сходства с учетом редактирования
             similarity = round(identical / total * 100, 1) if total > 0 else 0
 
             st.markdown(f"**📊 Общее количество слов:** {total}")
             st.markdown(f"**✅ Идентично:** {identical} ({similarity}%)")
             st.markdown(f"**❌ Различий:** {diffs} ({100 - similarity}%)")
 
-            # Прогресс-бар
             st.progress(similarity / 100)
 
-            # Таблица типов
             st.markdown("---")
             st.caption("📋 Типы различий:")
 
@@ -342,7 +404,7 @@ if 'comp_df' in st.session_state:
 
     # ЭКСПОРТ
     st.divider()
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
         csv = edited_df.to_csv(index=False).encode('utf-8-sig')
@@ -350,13 +412,15 @@ if 'comp_df' in st.session_state:
                            use_container_width=True)
 
     with col2:
-        # Экспорт в Excel
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.to_excel(writer, sheet_name='Alignment', index=False)
-        st.download_button("📊 Скачать Excel", output.getvalue(), "aligned_corpus.xlsx",
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.officeDocument",
-                           use_container_width=True)
+        try:
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                edited_df.to_excel(writer, sheet_name='Alignment', index=False)
+            st.download_button("📊 Скачать Excel", output.getvalue(), "aligned_corpus.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
+        except Exception as e:
+            st.warning(f"Экспорт в Excel временно недоступен. Используйте CSV.")
 
 else:
     st.info("👈 Загрузите XML-файлы и нажмите кнопку 'Запустить сравнение' в боковой панели.")
