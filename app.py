@@ -171,8 +171,8 @@ if st.session_state.raw_data and st.button("🚀 Запустить сравне
             for i, b_word in enumerate(base_words):
                 row = {
                     "ID": b_word['id'],
+                    "Лемма": b_word['lemma'],
                     f"ЭТАЛОН ({main_file})": b_word['text'],
-                    "Лемма": b_word['lemma']
                 }
                 for o_name in others:
                     m_word = all_aligns[o_name].get(i)
