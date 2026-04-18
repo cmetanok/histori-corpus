@@ -165,7 +165,7 @@ def classify_variant(main_word, witness_word):
 
 st.title("☦ Лингвистический компаратор")
 
-if 'raw_data' not in st.session_state: st.session_state.raw_data = {{}}
+if 'raw_data' not in st.session_state: st.session_state.raw_data = {}
 
 with st.sidebar:
     st.header("📁 Загрузка")
